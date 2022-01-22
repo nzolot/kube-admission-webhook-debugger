@@ -1,0 +1,76 @@
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    app: ${NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${NAME}
+  template:
+    metadata:
+      labels:
+        app: ${NAME}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 4331
+      containers:
+        - name: server
+          image: nzolot/kube-admission-webhook-debugger:0.0.11
+          args:
+            - "--log-level=debug"
+            - "--certfile=/run/secrets/tls/tls.crt"
+            - "--keyfile=/run/secrets/tls/tls.key"
+            - "--bind=0.0.0.0:8443"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8443
+              name: webhook-api
+          volumeMounts:
+            - name: webhook-tls-certs
+              mountPath: /run/secrets/tls
+              readOnly: true
+      volumes:
+        - name: webhook-tls-certs
+          secret:
+            secretName: webhook-server-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${NAME}
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: ${NAME}
+  ports:
+    - port: 443
+      targetPort: webhook-api
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: kube-admission-webhook-debugger
+webhooks:
+  - name: ${NAME}.${NAMESPACE}.svc
+    sideEffects: None
+    admissionReviewVersions: ["v1", "v1beta1"]
+    clientConfig:
+      service:
+        name: ${NAME}
+        namespace: ${NAMESPACE}
+        path: "/mutate"
+      caBundle: ${CA_PEM_B64}
+    failurePolicy: Ignore
+    rules:
+      - operations: [ "CREATE" ]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
